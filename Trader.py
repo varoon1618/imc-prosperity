@@ -161,25 +161,45 @@ class Trader:
                     orders.append(Order('RAINFOREST_RESIN', buy, 10))
                     orders.append(Order('RAINFOREST_RESIN', buy-1, 10))
             if product == 'KELP':
-                pred = self.predictKelp(order_depth)
-                logger.print(f'Kelp prediction: {pred}')
-                if position < 15 and position > -15:
-                    if pred-best_ask>=1:
-                        orders.append(Order('KELP', best_ask, 5))
-                        orders.append(Order('KELP', best_ask-1, 5))
-                    if pred-best_bid<=-1:
-                        orders.append(Order('KELP', best_bid, -5))
-                        orders.append(Order('KELP', best_bid+1, -5))
-                elif position>=15:
-                    orders.append(Order('KELP', sell, -5))
-                    orders.append(Order('KELP', sell+1, -5))
-                elif position<=-15:
-                    orders.append(Order('KELP', buy, 10))
-                    orders.append(Order('KELP', buy-1, 10))
+
+        
             result[product] = orders
         logger.flush(state, result, conversions, trader_data)
         return result, conversions, trader_data
     
+
+    def arima_forecast(self,prices: list[float], p: int) -> float:
+        if len(prices) <= p:
+            raise ValueError("Not enough data points for the given lag value p.")
+    
+        # Step 1: First-order differencing
+        diff = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
+
+    # Step 2: Create lagged feature matrix X and target vector y
+        X = []
+        y = []
+        for i in range(p, len(diff)):
+            X.append(diff[i - p:i])  # lagged differences
+            y.append(diff[i])        # current difference
+
+        X = np.atleast_2d(X)
+        y = np.atleast_1d(y)
+
+    # Step 3: Linear regression: solve Xβ = y for β
+        coeffs = np.linalg.lstsq(X, y, rcond=None)[0]
+
+    # Step 4: Predict next diff using last p diffs
+        latest_lags = np.array(diff[-p:])
+        next_diff = np.dot(latest_lags, coeffs)
+
+    # Step 5: Undo differencing to get next price
+        next_price = prices[-1] + next_diff
+
+        return next_price
+
+
+
+
     def predictKelp(self,order_depth: OrderDepth):
         bidPrices = list(order_depth.buy_orders.keys())
         bidVolumes = list(order_depth.buy_orders.values())
@@ -240,7 +260,6 @@ class Trader:
 
     def calcMeanPrice(self,order_depth: OrderDepth) -> float:
         prices = list(order_depth.buy_orders.keys()).extend(list(order_depth.sell_orders.keys()))
-        currentMean = statistics.mean(prices) if prices else 10,000
+        currentMean = statistics.mean(prices) if prices else 0
         return currentMean
-
-
+    
