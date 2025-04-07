@@ -146,6 +146,10 @@ class Trader:
             best_ask = min(sellPrices)
             buy = best_bid + 1
             sell = best_ask - 1
+            kelpBids = [4997]
+            kelpAsks = [5003]
+            kelpBidVolumes = [26]
+            kelpAskVolumes = [26]
             if product == 'RAINFOREST_RESIN':
                 if position < 40 and position > -40:
                     if best_bid >=10002:
@@ -161,103 +165,56 @@ class Trader:
                     orders.append(Order('RAINFOREST_RESIN', buy, 10))
                     orders.append(Order('RAINFOREST_RESIN', buy-1, 10))
             if product == 'KELP':
+                pred = self.predictKelp(order_depth,kelpBids[-1], kelpBidVolumes[-1], kelpAsks[-1], kelpAskVolumes[-1])
+                logger.print("Predicted Kelp Price:", pred)
+                kelpBids.append(best_bid)
+                kelpBidVolumes.append(order_depth.buy_orders[best_bid])
+                kelpAsks.append(best_ask)
+                kelpAskVolumes.append(order_depth.sell_orders[best_ask])
+                if position < 30 and position > -30:
+                    if pred-best_bid<=-2:
+                        orders.append(Order('KELP', best_bid, -5))
+                    if pred-best_ask >= 2:
+                        orders.append(Order('KELP', best_ask, 5))
+                elif position<=-30:
+                    orders.append(Order('KELP', best_ask, 10))
+                elif position>=30:
+                    orders.append(Order('KELP', best_bid, -10))
+    
 
-        
             result[product] = orders
         logger.flush(state, result, conversions, trader_data)
         return result, conversions, trader_data
     
 
-    def arima_forecast(self,prices: list[float], p: int) -> float:
-        if len(prices) <= p:
-            raise ValueError("Not enough data points for the given lag value p.")
-    
-        # Step 1: First-order differencing
-        diff = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
-
-    # Step 2: Create lagged feature matrix X and target vector y
-        X = []
-        y = []
-        for i in range(p, len(diff)):
-            X.append(diff[i - p:i])  # lagged differences
-            y.append(diff[i])        # current difference
-
-        X = np.atleast_2d(X)
-        y = np.atleast_1d(y)
-
-    # Step 3: Linear regression: solve Xβ = y for β
-        coeffs = np.linalg.lstsq(X, y, rcond=None)[0]
-
-    # Step 4: Predict next diff using last p diffs
-        latest_lags = np.array(diff[-p:])
-        next_diff = np.dot(latest_lags, coeffs)
-
-    # Step 5: Undo differencing to get next price
-        next_price = prices[-1] + next_diff
-
-        return next_price
 
 
-
-
-    def predictKelp(self,order_depth: OrderDepth):
+    def predictKelp(self,order_depth: OrderDepth,prev_bid1,prev_bid_vol,prev_ask1,prev_ask_vol) -> float:
         bidPrices = list(order_depth.buy_orders.keys())
         bidVolumes = list(order_depth.buy_orders.values())
         askPrices = list(order_depth.sell_orders.keys())
         askVolumes = list(order_depth.sell_orders.values())
-        bidPrices = self.fillNa(bidPrices)
         askPrices = self.fillNa(askPrices)
-        bidVolumes = self.fillNa(bidVolumes)    
+        bidPrices = self.fillNa(bidPrices)
+        bidVolumes = self.fillNa(bidVolumes)
         askVolumes = self.fillNa(askVolumes)
 
-        coeff = {'bid_1':0.504144,'ask_1':0.491322,'bid_volume_2':-0.088549,'ask_volume_2':0.067670,
-                'ask_volume_1':0.056324,
-                'bid_volume_1':-0.030049,
-                'bid_volume_3':0.006537,
-                'ask_volume_3':-0.001741,
-                'bid_price_3':-0.000760,
-                'ask_price_3':0.000418,
-                'bid_price_2':0.000147,
-                'ask_price_2':0.000091}
+        coeff = {'ask_price_1':0.279515,
+                 'bid_price_1':0.263735,
+                 'prev1_ask_price': 0.235733,
+                 'prev1_bid_price':0.218569,
+                 'ask_volume_1':-0.023115,
+                 'bid_volume_1':0.022885,
+                 'prev1_bid_volume':0.019662,
+                 'prev1_ask_volume':-0.017221}
         
-        pred = coeff['bid_1']*bidPrices[0] + coeff['ask_1']*askPrices[0] + coeff['bid_volume_2']*bidVolumes[1] + coeff['ask_volume_2']*askVolumes[1] + coeff['ask_volume_1']*askVolumes[0] + coeff['bid_volume_1']*bidVolumes[0] + coeff['bid_volume_3']*bidVolumes[2] + coeff['ask_volume_3']*askVolumes[2] + coeff['bid_price_3']*bidPrices[2] + coeff['ask_price_3']*askPrices[2] + coeff['bid_price_2']*bidPrices[1] + coeff['ask_price_2']*askPrices[1]
+        pred = coeff['bid_price_1']*max(bidPrices) + coeff['ask_price_1']*min(askPrices) + coeff['prev1_bid_price']*prev_bid1 + coeff['prev1_ask_price']*prev_ask1 + coeff['bid_volume_1']*bidVolumes[0] + coeff['ask_volume_1']*askVolumes[0] + coeff['prev1_bid_volume']*prev_bid_vol + coeff['prev1_ask_volume']*prev_ask_vol
         return pred 
     
     def fillNa(self,list):
         padded_list = (list + [0]*3)[:3]
         return padded_list
-
-
-    def tradeResin(self,order_depth: OrderDepth):
-        resinOrders = []
-        previousPrices = [10,000]
-        buyPrices = list(order_depth.buy_orders.keys())
-        best_bid = max(buyPrices)
-        sellPrices = list(order_depth.sell_orders.keys())
-        best_ask = min(sellPrices)
-        historicMean = statistics.mean(previousPrices)
-        allprices = []
-        allprices.extend(buyPrices)
-        allprices.extend(sellPrices)
-        currentMean = statistics.mean(allprices)
-        previousPrices.append(currentMean)
-        if currentMean - historicMean >=2:
-            if(best_bid > historicMean):
-                logger.print(f' RESIN sell price : {best_bid}')
-                resinOrders.append(Order('RAINFOREST_RESIN',best_bid,-10))
-            else:
-                logger.print(f' RESIN sell price : {best_bid+1}')
-                resinOrders.append(Order('RAINFOREST_RESIN',best_bid+1,-10))
-        if currentMean - historicMean <=-2:
-            if(best_ask < historicMean):
-                logger.print(f' RESIN buy price : {best_ask}')
-                resinOrders.append(Order('RAINFOREST_RESIN',best_ask,10))
-            else:
-                logger.print(f' RESIN buy price : {best_ask-1}')
-                resinOrders.append(Order('RAINFOREST_RESIN',best_ask-1,10))
-        return resinOrders
     
-
     def calcMeanPrice(self,order_depth: OrderDepth) -> float:
         prices = list(order_depth.buy_orders.keys()).extend(list(order_depth.sell_orders.keys()))
         currentMean = statistics.mean(prices) if prices else 0
