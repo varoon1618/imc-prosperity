@@ -125,7 +125,7 @@ class Logger:
 
 logger = Logger()
 class KalmanFilter:
-    def __init__(self, initial_estimate, initial_error=2, process_noise=0.0001, measurement_noise=4):
+    def __init__(self, initial_estimate, initial_error=2, process_noise=0.001, measurement_noise=4):
         self.x = initial_estimate          # Initial estimate
         self.P = initial_error             # Initial estimate covariance
         self.Q = process_noise             # Process (model) noise
@@ -151,7 +151,9 @@ class Trader:
         result = {}
         conversions = 0
         trader_data = ""
-        squidKF = KalmanFilter(initial_estimate=2004)
+        squidKF = KalmanFilter(initial_estimate=1969)
+        squidPrices = [1971, 1971, 1971, 1969, 1970, 1971, 1973, 1972, 1973, 1972]
+
         kelpKF = KalmanFilter(initial_estimate=2000)
         for product in state.order_depths:
             own_trades: List[Trade] = state.own_trades.get(product, [])  # Avoid KeyError
@@ -164,16 +166,18 @@ class Trader:
             buyPrices = list(order_depth.buy_orders.keys())
             best_bid = max(buyPrices)
             sellPrices = list(order_depth.sell_orders.keys())
+            buyOrders = order_depth.buy_orders
+            sellOrders = order_depth.sell_orders
             best_ask = min(sellPrices)
             buy = best_bid + 1
             sell = best_ask - 1
             if product == 'RAINFOREST_RESIN':
                 if position < 40 and position > -40:
                     if best_bid >=10001:
-                        orders.append(Order('RAINFOREST_RESIN', best_bid, -5))
+                        orders.append(Order('RAINFOREST_RESIN', best_bid, -buyOrders[best_bid]))
                         orders.append(Order('RAINFOREST_RESIN', best_bid+1, -5))
                     if best_ask <=9999:
-                        orders.append(Order('RAINFOREST_RESIN', best_ask, 5))
+                        orders.append(Order('RAINFOREST_RESIN', best_ask, -sellOrders[best_ask]))
                         orders.append(Order('RAINFOREST_RESIN', best_ask-1, 5))
                 elif position>=40:
                     orders.append(Order('RAINFOREST_RESIN', sell, -10))
@@ -184,41 +188,59 @@ class Trader:
 
             if product == 'SQUID_INK':
                 midPrice = self.calcMean(buyPrices, sellPrices)
-                fairPrice = int(squidKF.update(midPrice))
-                logger.print(f"Squid Mid Price: {midPrice}")
-                logger.print(f"Squid Fair Price: {fairPrice}")
-                logger.print(f"Squid Best Bid: {best_bid}")
-                logger.print(f"Squid Best Ask: {best_ask}")
-                if fairPrice - best_ask >= 2:
-                    orders.append(Order('SQUID_INK', best_ask,5))
-                if fairPrice - best_bid <= -2:
-                    orders.append(Order('SQUID_INK', best_bid,-5))
-                if position > 5:
-                    pnl = self.unrealized_pnl(own_trades, 'SUBMISSION', best_bid-1, best_ask+1)
-                    logger.print(f"Squid unrealised PnL: {pnl}")
-                    if pnl > 0 or pnl<-20:
-                        orders.append(Order('SQUID_INK', best_bid-1, -position))
-                elif position < -5:
-                    pnl = self.unrealized_pnl(own_trades, 'SUBMISSION', best_bid-1, best_ask+1)
-                    logger.print(f"Squid unrealised PnL: {pnl}")
-                    if pnl > 0 or pnl<-20:
-                        orders.append(Order('SQUID_INK', best_ask+1, position))
+                zscore,squidPrices = self.zScore(midPrice, squidPrices, 5)
+                logger.print(f'squid ink mid price: {midPrice}')
+                logger.print(f'squid ink zscore: {zscore}')
+                buyorders = order_depth.buy_orders
+                sellorders = order_depth.sell_orders
+                if zscore < -10 and position <25:
+                    orders.append(Order('SQUID_INK', best_ask, -sellorders[best_ask]))
+                if zscore > 7 and position >-25:
+                    orders.append(Order('SQUID_INK', best_bid, -buyorders[best_bid]))
+                elif position >=25 or position <=-25:
+                    if position < 0 and -2<zscore<2:
+                        if abs(position) < abs(sellorders[best_ask]):
+                            orders.append(Order('SQUID_INK',best_ask, abs(position)))
+                        if abs(position) > abs(sellorders[best_ask]):
+                            orders.append(Order('SQUID_INK', best_ask, -sellorders[best_ask]))
+                            orders.append(Order('SQUID_INK', best_ask+1, (abs(position) - abs(sellorders[best_ask]))))
+                        else:
+                            orders.append(Order('SQUID_INK', best_ask, -sellorders[best_ask]))
+                    elif position > 0 and -4<zscore<2:
+                        if abs(position) < abs(buyorders[best_bid]):
+                            orders.append(Order('SQUID_INK', best_bid, -abs(position)))
+                        if abs(position) > abs(buyorders[best_bid]) > 0:
+                            orders.append(Order('SQUID_INK', best_bid, -buyorders[best_bid]))
+                            orders.append(Order('SQUID_INK', best_bid-1, -(abs(position) - abs(buyorders[best_bid]))))
+                        else:
+                            orders.append(Order('SQUID_INK', best_bid, -buyorders[best_bid]))
             if product == 'KELP':
-                midPrice = self.calcMean(buyPrices, sellPrices)
-                fairPrice = int(kelpKF.update(midPrice))
-                if fairPrice - midPrice >= 2:
-                    orders.append(Order('KELP', midPrice,5))
-                if fairPrice - best_bid <= -1:
-                    orders.append(Order('KELP', best_bid,-5))
+                buyorders = order_depth.buy_orders
+                sellorders = order_depth.sell_orders
+                fairPrice = self.fairPriceKelp(order_depth)
+                logger.print(f'kelp fair price: {fairPrice}')
+                if fairPrice - best_ask >= 2:
+                    orders.append(Order('KELP', best_ask,-sellorders[best_ask]))
+                if fairPrice - best_bid <= -2:
+                    orders.append(Order('KELP', best_bid,-buyorders[best_bid]))
+                if position > 0:
+                    orders.append(Order('KELP', fairPrice+1, -5))
+                    orders.append(Order('KELP', fairPrice-2, -5))
+                if position < 0:
+                    orders.append(Order('KELP', fairPrice-1, 5))
+                    orders.append(Order('KELP', fairPrice+2, 5))
+
             result[product] = orders
         logger.flush(state, result, conversions, trader_data)
         return result, conversions, trader_data
     
-    def fairPriceSquid(self, order_depth: OrderDepth) -> int:
+    def fairPriceKelp(self, order_depth: OrderDepth) -> int:
         buyOrders = order_depth.buy_orders
         bidPrice = max(buyOrders, key=buyOrders.get)
         sellOrders = order_depth.sell_orders
-        askPrcie = max(sellOrders, key=sellOrders.get)
+        askPrcie = min(sellOrders, key=sellOrders.get)
+        logger.print(f'bid price: {bidPrice}')
+        logger.print(f'ask price: {askPrcie}')
         return(int((bidPrice + askPrcie)/2))
 
     def fillNa(self,list):
@@ -230,6 +252,24 @@ class Trader:
         mean = sum(buyPrices) / len(buyPrices)
         return int(mean)
     
+    def zScore(self, new_price, prices, block_size):
+        prices.append(new_price)
+
+    # Don't compute z-score until we have at least one full block + 1 new point
+        if len(prices) < block_size + 1:
+            return None, prices
+
+    # Determine which block to use (shift every time new group of 3 is complete)
+        block_start = ((len(prices) - block_size - 1) // block_size) * block_size
+        block = prices[block_start:block_start + block_size]
+
+        mean = sum(block) / block_size
+        std = pd.Series(block).std()
+
+        z = (new_price - mean) / std if std != 0 else 0
+        return z, prices
+
+
     def unrealized_pnl(self,trades: list[Trade], user_id: str, best_bid: int, best_ask: int):
         long_inventory = []   # (price, quantity)
         short_inventory = []  # (price, quantity)
