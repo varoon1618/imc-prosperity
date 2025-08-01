@@ -189,11 +189,10 @@ class Trader:
             if product == 'SQUID_INK':
                 midPrice = self.calcMean(buyPrices, sellPrices)
                 zscore,squidPrices = self.zScore(midPrice, squidPrices, 5)
-                logger.print(f'squid ink mid price: {midPrice}')
-                logger.print(f'squid ink zscore: {zscore}')
                 buyorders = order_depth.buy_orders
                 sellorders = order_depth.sell_orders
                 if zscore < -10 and position <25:
+                    
                     orders.append(Order('SQUID_INK', best_ask, -sellorders[best_ask]))
                 if zscore > 7 and position >-25:
                     orders.append(Order('SQUID_INK', best_bid, -buyorders[best_bid]))
@@ -229,7 +228,56 @@ class Trader:
                 if position < 0:
                     orders.append(Order('KELP', fairPrice-1, 5))
                     orders.append(Order('KELP', fairPrice+2, 5))
-
+            
+            if product == 'PICNIC_BASKET1':
+                threshold = 30
+                basket1_bid = max(state.order_depths['PICNIC_BASKET1'].buy_orders.keys())
+                basket1_ask = min(state.order_depths['PICNIC_BASKET1'].sell_orders.keys())
+                croissant_bid = max(state.order_depths['CROISSANT'].buy_orders.keys())
+                croissant_ask = min(state.order_depths['CROISSANT'].sell_orders.keys())
+                jam_bid = max(state.order_depths['JAM'].buy_orders.keys())
+                jam_ask = min(state.order_depths['JAM'].sell_orders.keys())
+                djembe_bid = max(state.order_depths['DJEMBE'].buy_orders.keys())
+                djembe_ask = min(state.order_depths['DJEMBE'].sell_orders.keys())
+                
+                basket1_synth_bid = 6 * croissant_bid + 3 * jam_bid + 1 * djembe_bid
+                basket1_synth_ask = 6 * croissant_ask + 3 * jam_ask + 1 * djembe_ask
+                
+                if basket1_ask > basket1_synth_ask + threshold:
+                    # Go short basket, long constituents
+                    orders.append(Order('PICNIC_BASKET1', basket1_ask, -1))
+                    orders.append(Order('CROISSANT', croissant_bid, 6))
+                    orders.append(Order('JAM', jam_bid, 3))
+                    orders.append(Order('DJEMBE', djembe_bid, 1))
+                elif basket1_bid < basket1_synth_bid - threshold:
+                    # Go long basket, short constituents
+                    orders.append(Order('PICNIC_BASKET1', basket1_bid, 1))
+                    orders.append(Order('CROISSANT', croissant_ask, -6))
+                    orders.append(Order('JAM', jam_ask, -3))
+                    orders.append(Order('DJEMBE', djembe_ask, -1))
+            
+            if product == 'PICNIC_BASKET2':
+                basket2_bid = max(state.order_depths['PICNIC_BASKET2'].buy_orders.keys())
+                basket2_ask = min(state.order_depths['PICNIC_BASKET2'].sell_orders.keys())
+                croissant_bid = max(state.order_depths['CROISSANT'].buy_orders.keys())
+                croissant_ask = min(state.order_depths['CROISSANT'].sell_orders.keys())
+                jam_bid = max(state.order_depths['JAM'].buy_orders.keys())
+                jam_ask = min(state.order_depths['JAM'].sell_orders.keys())
+                
+                basket2_synth_bid = 4 * croissant_bid + 2 * jam_bid
+                basket2_synth_ask = 4 * croissant_ask + 2 * jam_ask
+                
+                if basket2_ask > basket2_synth_ask + threshold:
+                    # Go short basket, long constituents
+                    orders.append(Order('PICNIC_BASKET2', basket1_ask, -1))
+                    orders.append(Order('CROISSANT', croissant_bid, 4))
+                    orders.append(Order('JAM', jam_bid, 2))
+                
+                elif basket2_bid < basket2_synth_bid - threshold:
+                    # Go long basket, short constituents
+                    orders.append(Order('PICNIC_BASKET2', basket1_bid, 1))
+                    orders.append(Order('CROISSANT', croissant_ask, -4))
+                    orders.append(Order('JAM', jam_ask, -2))
             result[product] = orders
         logger.flush(state, result, conversions, trader_data)
         return result, conversions, trader_data
@@ -277,6 +325,7 @@ class Trader:
         for trade in trades:
             if trade.buyer == user_id:
                 # You bought (long)
+                
                 qty = trade.quantity
                 # If covering short position
                 while qty > 0 and short_inventory:
